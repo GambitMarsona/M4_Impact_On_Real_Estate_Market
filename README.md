@@ -1,10 +1,6 @@
 # 📊 Analiza wpływu planowanej linii metra M4 na rynek nieruchomości w Warszawie
 Autor: **Marek Polit**, SGH, 2025.
-Promotor: Profesor SGH - Małgorzata Wrzosek
-
-
-
-# Wizualizacje – wpływ linii M4 na rynek nieruchomości
+Promotor: Profesor SGH - **Małgorzata Wrzosek**
 
 <!-- RZĄD 1 – MAPA + BOX + TREND -->
 <table>
