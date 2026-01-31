@@ -1,11 +1,72 @@
-from __future__ import annotations
+"""
+machine_learning_and_visualisations.py
 
+Ten moduł korzysta z konfiguracji CFG_ML do zbudowania spójnego pipeline’u:
+- przygotowania danych (feature engineering + preprocessing),
+- trenowania i walidacji modeli,
+- oraz wygenerowania zestawu wizualizacji diagnostycznych i opisowych.
+
+Konfiguracja (CFG_ML) — kluczowe sekcje:
+
+1) CFG_ML["experiment"]
+   - definicja eksperymentu ML:
+     - target_col: kolumna celu (np. "Cena_za_m2")
+     - log_target: czy zastosować logarytmowanie targetu
+     - test_size: rozmiar zbioru testowego
+     - random_state: ziarno losowości (powtarzalność wyników)
+     - cv_folds: liczba foldów w walidacji krzyżowej
+     - scoring: metryki oceny (MAE, RMSE, R2)
+
+2) CFG_ML["features"]
+   - podział zmiennych według typu statystycznego (do poprawnego preprocessingu):
+     - continuous: zmienne ciągłe (np. odległości, metraż)
+     - ordinal: zmienne porządkowe (np. piętro, rok budowy)
+     - categorical: zmienne nominalne do kodowania (np. dzielnica, stan wykończenia)
+     - binary: zmienne 0/1 (udogodnienia)
+
+3) CFG_ML["preprocessing"]
+   - transformacje wejściowe wykonywane przed modelowaniem:
+     - scaling: metoda skalowania (np. standard) i zakres zastosowania
+     - encoding: kodowanie kategorii (one-hot) + drop_first
+     - log_transform: lista kolumn, na których wykonywany jest log-transform
+       (np. odległości do metra / terenów zielonych / supermarketu)
+
+4) CFG_ML["models"]
+   - lista modeli do uruchomienia wraz z siatkami hiperparametrów:
+     - random_forest
+     - xgboost
+     - svr
+     - dnn
+   - każdy wpis zawiera:
+     - name: identyfikator modelu
+     - params: zakres hiperparametrów do strojenia (GridSearch / podobne)
+
+5) CFG_ML["training"]
+   - ustawienia trenowania dla modelu DNN:
+     - optimizer, epochs, batch_size, validation_split
+     - early_stopping (patience, restore_best_weights)
+
+Wizualizacje / raporty generowane przez moduł (rejestrowane i uruchamiane przez runner):
+  - "ml_true_vs_pred_kde_grid"
+  - "ml_feature_importance_all_models"
+  - "ml_feature_importance_rf_vs_xgboost"
+  - "ml_metrics_bar_models"
+  - "ml_poly_degree_mse_panel"
+  - "ml_distance_effect_poly10_panel"
+  - "_ml_gradient_map_max_envelope"
+  
+Dodatkowo:
+- generowany jest raport brakujących danych przed uruchomieniem wizualizacji,
+- wyniki wizualizacji są automatycznie zapisywane do katalogu ./visualizations
+  (katalog jest tworzony, jeżeli nie istnieje).
+"""
+
+
+from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
-
 import numpy as np
 import pandas as pd
-
 from core import Bundle, Pipeline, StepExecutionError
 from visualizations_and_filtering import register_viz
 
@@ -38,14 +99,7 @@ def _non_null_count(df: pd.DataFrame, col: str) -> int:
 def _resolve_columns(
     df: pd.DataFrame,
     cols: Iterable[str],
-) -> Tuple[List[str], Dict[str, str], List[str]]:
-    """
-    Rozwiązuje nazwy kolumn z CFG na nazwy w df:
-    - jeśli jest exact match -> używa, ALE:
-      jeśli istnieje też wersja "zsanityzowana" i ma więcej nie-NaN, wybierze ją
-      (case: masz i 'Winda' i 'winda' – a jedna kolumna jest pusta)
-    - jeśli nie ma exact match -> próbuje po sanitize
-    """
+    ) -> Tuple[List[str], Dict[str, str], List[str]]:
     resolved: List[str] = []
     mapping: Dict[str, str] = {}
     missing: List[str] = []
@@ -59,7 +113,6 @@ def _resolve_columns(
 
         chosen = None
         if exact and sanitized and exact != sanitized:
-            # wybierz tę z większą liczbą nie-NaN
             chosen = sanitized if _non_null_count(df, sanitized) > _non_null_count(df, exact) else exact
         elif exact:
             chosen = exact
@@ -90,31 +143,29 @@ def _save_fig(fig, path: Path) -> str:
 
 
 def _in_notebook() -> bool:
-    """Best-effort detection of a Jupyter/Notebook environment."""
+    """Detekcja czy kod jest odpalany w Jupyter Notebooku"""
     try:
         from IPython import get_ipython  # type: ignore
         ip = get_ipython()
         if ip is None:
             return False
-        # Works for Jupyter + VSCode notebooks
+        # działa na jupyter + VS CODE
         return bool(getattr(ip, "kernel", None)) or bool(ip.config.get("IPKernelApp"))
     except Exception:
         return False
 
 
 def _maybe_show_matplotlib(fig, *, enabled: bool) -> None:
-    """Show a matplotlib figure if enabled (safe no-op outside notebooks)."""
     if not enabled:
         return
     try:
         import matplotlib.pyplot as plt
         try:
-            plt.figure(fig.number)  # make it current
+            plt.figure(fig.number)  
         except Exception:
             pass
         plt.show()
     except Exception:
-        # don't fail the pipeline because of display issues
         pass
 
 
@@ -220,7 +271,7 @@ def _build_preprocessor(
     if cat_mode != "onehot":
         raise StepExecutionError("ML preprocessing: wspieram tutaj tylko encoding['categorical'] == 'onehot'.")
 
-    # sklearn compatibility (sparse_output vs sparse)
+    # kompatybilność sklearn
     try:
         ohe = OneHotEncoder(drop="first" if drop_first else None, handle_unknown="ignore", sparse_output=False)
     except TypeError:
@@ -228,7 +279,7 @@ def _build_preprocessor(
 
     cat_imputer = SimpleImputer(strategy="most_frequent")
 
-    # continuous: rozdzielamy na log i non-log
+    # ciągłe: rozdzielamy na log i non-log
     cont_log = [c for c in continuous if c in log_cols]
     cont_plain = [c for c in continuous if c not in log_cols]
 
@@ -301,7 +352,6 @@ def _make_default_feature_rename_dict() -> Dict[str, str]:
         "telewizor": "Telewizor",
         "teren_zamkniety": "Teren zamknięty",
         "zmywarka": "Zmywarka",
-        # dist (Twoje + z CFG)
         "log_dist_to_metro_m1": "Odległość do metra M1",
         "log_dist_to_metro_m2": "Odległość do metra M2",
         "log_dist_to_green": "Odległość do zieleni",
@@ -323,16 +373,12 @@ def _permutation_importance_any_model(
     n_repeats: int = 5,
     random_state: int = 42,
 ) -> pd.DataFrame:
-    """
-    Zwraca df: feature, importance dla dowolnego modelu.
-    - sklearn Pipeline: permutation_importance permutuje kolumny X_test (surowe), więc feature = X_test.columns
-    - DNN: permutujemy na macierzy po preprocessingu, więc feature = feature_names_out (po transformacji)
-    """
+
     from sklearn.inspection import permutation_importance
 
     m = str(model_name).lower()
 
-    # ---- SKLEARN PIPELINE / ESTIMATOR ----
+    # SKLEARN PIPELINE / ESTYMATOR
     if m != "dnn":
         res = permutation_importance(
             model_obj,
@@ -352,7 +398,7 @@ def _permutation_importance_any_model(
         k = min(len(feats), int(res.importances_mean.shape[0]))
         return pd.DataFrame({"feature": feats[:k], "importance": res.importances_mean[:k]})
 
-    # ---- DNN ----
+    # DNN 
     try:
         pre = model_obj["preprocessor"]
         keras_model = model_obj["model"]
@@ -386,9 +432,8 @@ def _permutation_importance_any_model(
 
 
 # ============================================================
-# Registered visualisations (pure functions via @register_viz)
+# Wizualizacja: prawdziwe wartości vs przewidziane wartości
 # ============================================================
-
 @register_viz("ml_true_vs_pred_kde_grid")
 def ml_true_vs_pred_kde_grid(
     df: pd.DataFrame,
@@ -464,7 +509,9 @@ def ml_true_vs_pred_kde_grid(
     plt.tight_layout(rect=[0.04, 0.04, 1, 0.96])
     return fig, axes
 
-
+# ============================================================
+# Wizualizacja: Porównanie ważności cech: wszystkie modele
+# ============================================================
 @register_viz("ml_feature_importance_all_models")
 def ml_feature_importance_all_models(
     df_importances: pd.DataFrame,
@@ -482,9 +529,8 @@ def ml_feature_importance_all_models(
     agg = (
         d.groupby("feature", as_index=False)["importance"]
         .mean()
-        .sort_values("importance", ascending=False)
-        .head(int(top_n))
     )
+    agg = agg.sort_values("importance", ascending=False).head(int(top_n))
     top_feats = list(agg["feature"])
     d = d[d["feature"].isin(top_feats)].copy()
 
@@ -502,7 +548,6 @@ def ml_feature_importance_all_models(
 
     fig, ax = plt.subplots(figsize=figsize)
 
-    # (zostawiam Twoje kolory)
     color_map = {
         "Random Forest": "#00bfff",
         "XGBoost": "#ff1493",
@@ -531,6 +576,9 @@ def ml_feature_importance_all_models(
     return fig, ax
 
 
+# ============================================================
+# Wizualizacja: Porównanie ważności cech: Random Forest vs XGBoos
+# ============================================================
 @register_viz("ml_feature_importance_rf_vs_xgboost")
 def ml_feature_importance_rf_vs_xgboost(
     df_importances: pd.DataFrame,
@@ -541,11 +589,6 @@ def ml_feature_importance_rf_vs_xgboost(
     rf_label: str = "Random Forest",
     xgb_label: str = "XGBoost",
 ):
-    """Twoja wersja: 2 modele, poziome słupki, top-N cech.
-
-    Wejście: df_importances z kolumnami: feature, importance, model
-    gdzie model jest już "zhumanizowany" (np. "Random Forest", "XGBoost").
-    """
     import matplotlib.pyplot as plt
 
     d = df_importances.copy()
@@ -565,12 +608,12 @@ def ml_feature_importance_rf_vs_xgboost(
             f"Dostępne: {sorted(df_importances['model'].dropna().unique().tolist())}"
         )
 
-    # wybieramy top cechy po średniej ważności (RF+XGB)
+    # wybieramy top cechy po średniej ważności 
     piv = (
         d.pivot_table(index="feature", columns="model", values="importance", aggfunc="mean")
         .fillna(0.0)
     )
-    # upewnij się, że obie kolumny istnieją
+    # upewnienie się, że obie kolumny istnieją
     if rf_label not in piv.columns:
         piv[rf_label] = 0.0
     if xgb_label not in piv.columns:
@@ -588,9 +631,8 @@ def ml_feature_importance_rf_vs_xgboost(
     bar_width = 0.4
     fig, ax = plt.subplots(figsize=figsize)
 
-    # te same "neonowe" kolory co w Twoim przykładzie
-    rf_color = "#00bfff"  # DeepSkyBlue
-    xgb_color = "#ff1493"  # DeepPink
+    rf_color = "#00bfff"  
+    xgb_color = "#ff1493"  
 
     ax.barh(y - bar_width / 2, rf_vals, bar_width, label=rf_label, color=rf_color)
     ax.barh(y + bar_width / 2, xgb_vals, bar_width, label=xgb_label, color=xgb_color)
@@ -605,7 +647,9 @@ def ml_feature_importance_rf_vs_xgboost(
     plt.tight_layout()
     return fig, ax
 
-
+# ============================================================
+# Wizualizacja: Porównanie jakości modeli na zbiorze testowym
+# ============================================================
 @register_viz("ml_metrics_bar_models")
 def ml_metrics_bar_models(
     df_metrics: pd.DataFrame,
@@ -613,16 +657,12 @@ def ml_metrics_bar_models(
     figsize: tuple[int, int] = (14, 6),
     title: str = "Porównanie jakości modeli na zbiorze testowym",
 ):
-    """
-    Panel 1x3: MAE / MSE (lub RMSE jeśli MSE brak) / R²
-    - Kolory jak w seaborn Set2 (jeśli seaborn jest dostępny), inaczej fallback z matplotlib.
-    - Kolory są spójne między trzema panelami (ten sam model = ten sam kolor).
-    """
+
     import matplotlib.pyplot as plt
 
     d = df_metrics.copy()
 
-    # --- walidacja
+    # walidacja
     if "model" not in d.columns:
         raise KeyError("df_metrics musi mieć kolumnę: 'model'")
     if "mae" not in d.columns:
@@ -633,7 +673,7 @@ def ml_metrics_bar_models(
     if metric_mid is None:
         raise KeyError("df_metrics musi mieć kolumnę: 'mse' albo 'rmse'")
 
-    # --- sortowanie (po mid-metryce)
+    # sortowanie
     d[["mae", "r2", metric_mid]] = d[["mae", "r2", metric_mid]].apply(pd.to_numeric, errors="coerce")
     d = d.dropna(subset=["mae", "r2", metric_mid])
     d = d.sort_values(metric_mid, ascending=True).reset_index(drop=True)
@@ -641,9 +681,9 @@ def ml_metrics_bar_models(
     labels = d["model"].astype(str).tolist()
     n = len(labels)
 
-    # --- paleta jak Set2
+    # paleta 
     try:
-        import seaborn as sns  # optional
+        import seaborn as sns  
         palette = sns.color_palette("Set2", n_colors=max(1, n))
         colors = [palette[i] for i in range(n)]
     except Exception:
@@ -680,7 +720,9 @@ def ml_metrics_bar_models(
     plt.tight_layout(rect=[0, 0, 1, 0.92])
     return fig, axs
 
-
+# ============================================================
+# Wizualizacja: Porównanie wartości MSE dla różnych modeli
+# ============================================================
 @register_viz("ml_poly_degree_mse_panel")
 def ml_poly_degree_mse_panel(
     df_stats: pd.DataFrame,
@@ -731,7 +773,9 @@ def ml_poly_degree_mse_panel(
     plt.tight_layout()
     return fig, axs
 
-
+# ============================================================
+# Wizualizacja: Porównanie wpływu odległości od Metra na cenę za m²
+# ============================================================
 @register_viz("ml_distance_effect_poly10_panel")
 def ml_distance_effect_poly10_panel(
     fikcyjne: pd.DataFrame,
@@ -773,7 +817,7 @@ def ml_distance_effect_poly10_panel(
     y_m1_xgb = pd.to_numeric(fikcyjne["cena_predicted_m1_xgboost"], errors="coerce").to_numpy()
     y_m2_xgb = pd.to_numeric(fikcyjne["cena_predicted_m2_xgboost"], errors="coerce").to_numpy()
 
-    # global bounds (tylko po nie-NaN)
+    # globalne granice
     x_all = np.concatenate([x_m1[~np.isnan(x_m1)], x_m2[~np.isnan(x_m2)]]) if (np.any(~np.isnan(x_m1)) and np.any(~np.isnan(x_m2))) else None
     y_all = np.concatenate([
         y_m1_rf[~np.isnan(y_m1_rf)], y_m2_rf[~np.isnan(y_m2_rf)],
@@ -814,194 +858,6 @@ def ml_distance_effect_poly10_panel(
     plt.suptitle(title, fontsize=25, y=0.93)
     plt.tight_layout(rect=[0.05, 0.05, 1, 0.95])
     return fig, axs
-
-
-@register_viz("ml_gradient_map_m1_xgboost")
-def ml_gradient_map_m1_xgboost(
-    df_params: pd.DataFrame,
-    *,
-    metro_stations: pd.DataFrame,
-    districts_geojson_path: str,
-    max_distance_m: float = 15878.0,
-    grid_points: int = 200,
-    cmap: str = "jet",
-    title: str = "Mapa gradientowa potencjalnych zmian cen \n(M1 XGBoost)",
-):
-    import matplotlib.pyplot as plt
-    import matplotlib.ticker as mticker
-    import geopandas as gpd
-    from shapely.geometry import Point
-
-    if not {"lon", "lat"}.issubset(metro_stations.columns):
-        raise KeyError("metro_stations musi mieć kolumny: lon, lat")
-    if "M1 XGBoost" not in df_params.index:
-        raise KeyError("df_params musi mieć indeks 'M1 XGBoost' (a0..a10)")
-
-    a = df_params.loc["M1 XGBoost", :].to_numpy(dtype=float)
-    if a.size != 11:
-        raise StepExecutionError("df_params['M1 XGBoost'] musi zawierać 11 parametrów (a0..a10).")
-
-    def F(r):
-        a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10 = a
-        return (
-            a0 * r**10 + a1 * r**9 + a2 * r**8 + a3 * r**7 + a4 * r**6 +
-            a5 * r**5 + a6 * r**4 + a7 * r**3 + a8 * r**2 + a9 * r + a10
-        )
-
-    warsaw_districts = gpd.read_file(districts_geojson_path).to_crs(epsg=4326)
-
-    def haversine_distance(lat1, lon1, lat2, lon2):
-        R = 6371000.0
-        lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        aa = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
-        c = 2 * np.arcsin(np.sqrt(aa))
-        return R * c
-
-    lon_min, lat_min, lon_max, lat_max = warsaw_districts.total_bounds
-    lon_grid = np.linspace(lon_min, lon_max, int(grid_points))
-    lat_grid = np.linspace(lat_min, lat_max, int(grid_points))
-    X, Y = np.meshgrid(lon_grid, lat_grid)
-
-    stations_lon = np.asarray(metro_stations["lon"], dtype=float)
-    stations_lat = np.asarray(metro_stations["lat"], dtype=float)
-
-    distances = np.zeros((len(stations_lon), int(grid_points), int(grid_points)), dtype=float)
-    for i in range(len(stations_lon)):
-        distances[i] = haversine_distance(Y, X, stations_lat[i], stations_lon[i])
-    
-    
-    
-        # maskujemy odległości większe niż max_distance_m
-    dist = distances.copy()
-    dist[dist > float(max_distance_m)] = np.nan
-
-    # liczymy wartość F(r) dla KAŻDEJ stacji
-    Z_stack = np.empty_like(dist, dtype=float)
-    for i in range(dist.shape[0]):
-        Z_stack[i] = F(dist[i])
-
-    # agregacja: MAX wartości w danym punkcie
-    Z = np.nanmax(Z_stack, axis=0)
-
-
-    union_warsaw = warsaw_districts.unary_union
-    mask = np.vectorize(lambda x, y: union_warsaw.contains(Point(x, y)))(X, Y)
-    Z_masked = np.where(mask, Z, np.nan)
-
-    fig, ax = plt.subplots(figsize=(10, 10))
-    contour = ax.contourf(X, Y, Z_masked, levels=50, cmap=cmap, alpha=0.8)
-
-    cbar = plt.colorbar(contour, ax=ax, label="Wartość oszacowania ceny (PLN)")
-    cbar.ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f"))
-
-    warsaw_districts.boundary.plot(ax=ax, color="black", linewidth=1)
-    ax.scatter(metro_stations["lon"], metro_stations["lat"], color="cyan", edgecolor="black", s=20, zorder=5)
-
-    ax.set_title(title, fontsize=14)
-    ax.set_xlabel("Długość geograficzna (°)")
-    ax.set_ylabel("Szerokość geograficzna (°)")
-    return fig, ax
-
-
-@register_viz("ml_gradient_map_m2_random_forest")
-def ml_gradient_map_m2_random_forest(
-    df_params: pd.DataFrame,
-    *,
-    metro_stations: pd.DataFrame,
-    districts_geojson_path: str,
-    max_distance_m: float = 15878.0,
-    grid_points: int = 200,
-    cmap: str = "viridis",
-    title: str = "Mapa gradientowa potencjalnych zmian cen \n(M2 Random Forest)",
-):
-    import matplotlib.pyplot as plt
-    import matplotlib.ticker as mticker
-    import geopandas as gpd
-    from shapely.geometry import Point
-
-    if not {"lon", "lat"}.issubset(metro_stations.columns):
-        raise KeyError("metro_stations musi mieć kolumny: lon, lat")
-    if "M2 RF" not in df_params.index:
-        raise KeyError("df_params musi mieć indeks 'M2 RF' (a0..a10)")
-
-    a = df_params.loc["M2 RF", :].to_numpy(dtype=float)
-    if a.size != 11:
-        raise StepExecutionError("df_params['M2 RF'] musi zawierać 11 parametrów (a0..a10).")
-
-    def F(r):
-        a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10 = a
-        return (
-            a0 * r**10 + a1 * r**9 + a2 * r**8 + a3 * r**7 + a4 * r**6 +
-            a5 * r**5 + a6 * r**4 + a7 * r**3 + a8 * r**2 + a9 * r + a10
-        )
-
-    warsaw_districts = gpd.read_file(districts_geojson_path).to_crs(epsg=4326)
-
-    def haversine_distance(lat1, lon1, lat2, lon2):
-        R = 6371000.0
-        lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
-        dlat = lat2 - lat1
-        dlon = lon2 - lon1
-        aa = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
-        c = 2 * np.arcsin(np.sqrt(aa))
-        return R * c
-
-    lon_min, lat_min, lon_max, lat_max = warsaw_districts.total_bounds
-    lon_grid = np.linspace(lon_min, lon_max, int(grid_points))
-    lat_grid = np.linspace(lat_min, lat_max, int(grid_points))
-    X, Y = np.meshgrid(lon_grid, lat_grid)
-
-    stations_lon = np.asarray(metro_stations["lon"], dtype=float)
-    stations_lat = np.asarray(metro_stations["lat"], dtype=float)
-
-    distances = np.zeros((len(stations_lon), int(grid_points), int(grid_points)), dtype=float)
-    for i in range(len(stations_lon)):
-        distances[i] = haversine_distance(Y, X, stations_lat[i], stations_lon[i])
-    
-    
-    # maskujemy odległości większe niż max_distance_m
-    dist = distances.copy()
-    dist[dist > float(max_distance_m)] = np.nan
-
-    # liczymy wartość F(r) dla KAŻDEJ stacji
-    Z_stack = np.empty_like(dist, dtype=float)
-    for i in range(dist.shape[0]):
-        Z_stack[i] = F(dist[i])
-
-    # agregacja: MAX wartości w danym punkcie
-    Z = np.nanmax(Z_stack, axis=0)
-
-
-
-
-
-
-    union_warsaw = warsaw_districts.unary_union
-    mask = np.vectorize(lambda x, y: union_warsaw.contains(Point(x, y)))(X, Y)
-    Z_masked = np.where(mask, Z, np.nan)
-
-    fig, ax = plt.subplots(figsize=(10, 10))
-    contour = ax.contourf(X, Y, Z_masked, levels=50, cmap=cmap, alpha=0.8)
-
-    cbar = plt.colorbar(contour, ax=ax, label="Wartość oszacowania ceny (PLN)")
-    cbar.ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.0f"))
-
-    warsaw_districts.boundary.plot(ax=ax, color="black", linewidth=1)
-    ax.scatter(metro_stations["lon"], metro_stations["lat"], color="cyan", edgecolor="black", s=20, zorder=5)
-
-    ax.set_title(title, fontsize=14)
-    ax.set_xlabel("Długość geograficzna (°)")
-    ax.set_ylabel("Szerokość geograficzna (°)")
-    return fig, ax
-
-
-
-
-# ============================================================
-# Gradient maps: MAX-envelope ("interferencja fal") using ML curve f(r)
-# ============================================================
 
 def _make_typical_row_from_train(X_ref: pd.DataFrame) -> Dict[str, Any]:
     """
@@ -1080,16 +936,10 @@ def _ml_gradient_map_max_envelope(
     grid_points: int = 200,
     r_step_m: float = 25.0,
     cmap: str = "jet",
-    title: str = "Mapa gradientowa (MAX-envelope)",
+    title: str = "Mapa gradientowa",
 ):
     """
-    Mapa "interferencji fal" (upper envelope):
-      Z(x,y) = max_i f(r_i(x,y))
-    gdzie f(r) jest wyznaczone BEZPOŚREDNIO z predykcji ML dla "typowego mieszkania",
-    a r_i to odległość Haversine do stacji i.
-
-    To jest dokładnie to, co opisujesz: każda stacja "wypluwa" tę samą funkcję f(r),
-    a w punkcie wybieramy największą wartość.
+    Mapa "interferencji fal" 
     """
     import matplotlib.pyplot as plt
     import matplotlib.ticker as mticker
@@ -1099,17 +949,17 @@ def _ml_gradient_map_max_envelope(
     if not {"lon", "lat"}.issubset(metro_stations.columns):
         raise KeyError("metro_stations musi mieć kolumny: lon, lat")
 
-    # --- znajdź właściwą kolumnę odległości (w metrach) w danych treningowych
+    # znalezienie właściwej kolumny odległości 
     resolved, _, _ = _resolve_columns(X_train_ref, distance_col_candidates)
     if not resolved:
         raise StepExecutionError(
-            "Gradient map (MAX): nie znalazłem kolumny odległości. "
+            "Gradient map: nie znalazłem kolumny odległości. "
             f"Próbowałem: {distance_col_candidates}. "
             f"Dostępne (przykład): {list(X_train_ref.columns)[:50]}"
         )
     dist_col = resolved[0]
 
-    # --- zbuduj f(r) z ML (typowe mieszkanie + zmiana tylko dist_col)
+    # zbudowanie f(r) 
     r_grid = np.arange(0.0, float(max_distance_m) + float(r_step_m), float(r_step_m))
     r_grid, y_grid = _predict_curve_from_model(
         model_obj=model_obj,
@@ -1119,10 +969,10 @@ def _ml_gradient_map_max_envelope(
     )
     f = _interp_f(r_grid, y_grid)
 
-    # --- wczytaj granice Warszawy
+    # wczytanie granic Warszawy
     warsaw_districts = gpd.read_file(districts_geojson_path).to_crs(epsg=4326)
 
-    # --- haversine (metry)
+    # haversine 
     def haversine_distance(lat1, lon1, lat2, lon2):
         R = 6371000.0
         lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
@@ -1132,7 +982,7 @@ def _ml_gradient_map_max_envelope(
         c = 2 * np.arcsin(np.sqrt(aa))
         return R * c
 
-    # --- grid
+    
     lon_min, lat_min, lon_max, lat_max = warsaw_districts.total_bounds
     n = int(grid_points)
     lon_grid = np.linspace(lon_min, lon_max, n)
@@ -1142,24 +992,19 @@ def _ml_gradient_map_max_envelope(
     stations_lon = np.asarray(metro_stations["lon"], dtype=float)
     stations_lat = np.asarray(metro_stations["lat"], dtype=float)
 
-    # --- MAX envelope po stacjach
+    
     Z = np.full((n, n), -np.inf, dtype=float)
 
     for slat, slon in zip(stations_lat, stations_lon):
-        r = haversine_distance(Y, X, slat, slon)  # (n,n)
-        # cutoff: poza zasięgiem -> NaN, żeby np.fmax nie psuł
+        r = haversine_distance(Y, X, slat, slon)  
         r = r.astype(float)
         r[r > float(max_distance_m)] = np.nan
-
         z_i = f(r)
-        # jeśli r było NaN, z_i też będzie liczbą (bo np.interp z NaN daje NaN),
-        # więc fmax zachowa poprzednie Z.
         Z = np.fmax(Z, z_i)
 
-    # jeśli zostały -inf (np. wszystko poza cutoff), zamień na NaN
     Z[~np.isfinite(Z)] = np.nan
 
-    # --- maska Warszawy
+    # maska Warszawy
     union_warsaw = warsaw_districts.unary_union
     try:
         from shapely import vectorized as shp_vect
@@ -1169,7 +1014,7 @@ def _ml_gradient_map_max_envelope(
 
     Z_masked = np.where(inside, Z, np.nan)
 
-    # --- plot
+    # wykres
     fig, ax = plt.subplots(figsize=(10, 10))
     contour = ax.contourf(X, Y, Z_masked, levels=50, cmap=cmap, alpha=0.85)
 
@@ -1187,9 +1032,8 @@ def _ml_gradient_map_max_envelope(
 
 
 # ============================================================
-# Pipeline registration (ONLY here we touch pipe/bundle!)
+# Rejestracja Pipeline'u
 # ============================================================
-
 def register_machine_learning_and_visualisations(
     pipe: Pipeline,
     *,
@@ -1211,7 +1055,7 @@ def register_machine_learning_and_visualisations(
         on_table=on_table,
         requires=(),
         produces=(),
-        description="Train models + evaluation + store artifacts in bundle.",
+        description="Trenuj modele + ewaluacja + ocena artefaktów w bundle",
         skip_if_all_produced_present=False,
     )
     def _ml_train(data: pd.DataFrame) -> pd.DataFrame:
@@ -1258,7 +1102,7 @@ def register_machine_learning_and_visualisations(
         cv_tables: Dict[str, pd.DataFrame] = {}
         test_preds: Dict[str, np.ndarray] = {}
 
-        # -------- sklearn models (GridSearchCV)
+        # sklearn models
         for m in models_cfg:
             name = str(m.get("name", "")).strip().lower()
             params = dict(m.get("params", {}) or {})
@@ -1316,7 +1160,7 @@ def register_machine_learning_and_visualisations(
                 }
             )
 
-        # -------- DNN
+        # DNN
         dnn_cfg = next((x for x in models_cfg if str(x.get("name", "")).lower() == "dnn"), None)
         if dnn_cfg is not None:
             try:
@@ -1397,12 +1241,11 @@ def register_machine_learning_and_visualisations(
                 }
             )
 
-        # --- results table
+        # tabela wyników
         res_df = pd.DataFrame(results).sort_values(
             by=["test_rmse", "test_mae"], ascending=[True, True], na_position="last"
         )
 
-        # --- pred_grid_df (tu NIE może być różnej długości!)
         pred_grid_df = pd.DataFrame({"y_true": np.asarray(y_test, dtype=float)})
         for k, v in test_preds.items():
             v = np.asarray(v, dtype=float)
@@ -1412,12 +1255,10 @@ def register_machine_learning_and_visualisations(
                 )
             pred_grid_df[f"y_pred_{k}"] = v
 
-        # --- metrics df pod wykres słupkowy
         df_metrics = res_df[["model", "test_mae", "test_rmse", "test_mse", "test_r2"]].copy()
         df_metrics = df_metrics.rename(columns={"test_mae": "mae", "test_rmse": "rmse", "test_mse": "mse", "test_r2": "r2"})
         df_metrics["model"] = df_metrics["model"].map(_human_model_name)
 
-        # --- feature names out
         feature_names_out = None
         for k, v in fitted.items():
             if isinstance(v, dict) and k == "dnn":
@@ -1430,7 +1271,7 @@ def register_machine_learning_and_visualisations(
             except Exception:
                 continue
 
-        # --- importances (bezpiecznie: zawsze permutation dla spójności)
+        # ranking ważności 
         rename_dict = _make_default_feature_rename_dict()
         imp_rows = []
         for k, model_obj in fitted.items():
@@ -1449,10 +1290,7 @@ def register_machine_learning_and_visualisations(
 
         df_importances = pd.concat(imp_rows, ignore_index=True) if imp_rows else pd.DataFrame(columns=["feature", "importance", "model"])
 
-        # ============================================================
-        # "Fikcyjne" dane do wpływu odległości (robimy 2 segmenty, żeby nie mieszać osi)
-        # ============================================================
-
+        
         def _make_fikcyjne_for_distance_effect(*, X_ref: pd.DataFrame, n_points: int = 400) -> pd.DataFrame:
             base = {}
             for c in X_ref.columns:
@@ -1461,7 +1299,6 @@ def register_machine_learning_and_visualisations(
                 else:
                     base[c] = str(X_ref[c].mode(dropna=True).iloc[0]) if X_ref[c].notna().any() else ""
 
-            # wspieramy zarówno stare nazwy (dist_*_m) jak i nowe (Odleglosc_*)
             m1 = _resolve_columns(X_ref, ["Odleglosc_metro_m1", "dist_metro_m1_m", "Odleglosc_metro_m1_m"])[0]
             m2 = _resolve_columns(X_ref, ["Odleglosc_metro_m2", "dist_metro_m2_m", "Odleglosc_metro_m2_m"])[0]
             if not m1 or not m2:
@@ -1480,7 +1317,6 @@ def register_machine_learning_and_visualisations(
             grid_m1 = np.linspace(m1_min, m1_max, int(n_points))
             grid_m2 = np.linspace(m2_min, m2_max, int(n_points))
 
-            # segment M1: zmieniamy M1, M2 trzymamy stałe
             rows_m1 = []
             for v in grid_m1:
                 r = dict(base)
@@ -1489,10 +1325,9 @@ def register_machine_learning_and_visualisations(
                 rows_m1.append(r)
             df_m1 = pd.DataFrame(rows_m1)
             df_m1["log_dist_to_metro_m1"] = np.log1p(np.maximum(pd.to_numeric(df_m1[m1c], errors="coerce"), 0))
-            df_m1["log_dist_to_metro_m2"] = np.nan  # ważne: nie mieszaj serii
+            df_m1["log_dist_to_metro_m2"] = np.nan  
             df_m1["_segment"] = "m1"
 
-            # segment M2: zmieniamy M2, M1 trzymamy stałe
             rows_m2 = []
             for v in grid_m2:
                 r = dict(base)
@@ -1508,7 +1343,7 @@ def register_machine_learning_and_visualisations(
 
         fikcyjne = _make_fikcyjne_for_distance_effect(X_ref=X_train, n_points=400)
 
-        # predykcje tylko dla RF i XGB (bo takie są na panelu 2x2)
+        # predykcje tylko dla RF i XGB 
         if not fikcyjne.empty and "random_forest" in fitted and "xgboost" in fitted:
             rf = fitted["random_forest"]
             xgb = fitted["xgboost"]
@@ -1536,7 +1371,6 @@ def register_machine_learning_and_visualisations(
         else:
             fikcyjne = pd.DataFrame()
 
-        # ---- df_stats + df_params (poly10) do map
         def _poly_fit_mse(x: np.ndarray, y: np.ndarray, degree: int) -> float:
             ok = ~np.isnan(x) & ~np.isnan(y)
             x1 = x[ok]
@@ -1622,11 +1456,9 @@ def register_machine_learning_and_visualisations(
 
 
         viz_cfg = CFG.get("visualisations", {}) or {}
-        # Domyślnie pokazujemy wykresy TYLKO w notebooku (żeby nie blokować skryptów).
-        # Możesz wymusić zachowanie przez CFG['visualisations']['show_plots'] = True/False.
         show_plots = bool(viz_cfg.get("show_plots")) if ("show_plots" in viz_cfg) else _in_notebook()
 
-        # (1) Metrics bars
+        # (1) Słupki z metrykami
         df_metrics: pd.DataFrame = art.get("df_metrics")
         if df_metrics is None or df_metrics.empty:
             raise StepExecutionError("ML viz: brak df_metrics w artifacts.")
@@ -1644,7 +1476,7 @@ def register_machine_learning_and_visualisations(
         _maybe_show_matplotlib(fig, enabled=show_plots)
         plt.close(fig)
 
-        # (3) Feature importances (RF vs XGB)
+        # (3) Ranking Ważności (RF vs XGB)
         df_importances: pd.DataFrame = art.get("df_importances")
         if df_importances is None or df_importances.empty:
             raise StepExecutionError("ML viz: brak df_importances w artifacts.")
@@ -1653,7 +1485,7 @@ def register_machine_learning_and_visualisations(
         _maybe_show_matplotlib(fig, enabled=show_plots)
         plt.close(fig)
 
-        # (4) MSE vs degree panel
+        # (4) Błąd średniokwadratowy w zależności od stopnia wielomianu
         df_stats: pd.DataFrame = art.get("df_stats")
         if df_stats is None or df_stats.empty:
             raise StepExecutionError("ML viz: brak df_stats (do poly-degree MSE).")
@@ -1662,7 +1494,7 @@ def register_machine_learning_and_visualisations(
         _maybe_show_matplotlib(fig, enabled=show_plots)
         plt.close(fig)
 
-        # (5) Distance effect poly10 panel (M1/M2 + RF/XGB)
+        # (5) Interpolacja dystansu na danych fikcyjnych
         fikcyjne: pd.DataFrame = art.get("fikcyjne")
         if fikcyjne is None or fikcyjne.empty:
             raise StepExecutionError("ML viz: brak fikcyjne (do distance effect).")
@@ -1672,9 +1504,7 @@ def register_machine_learning_and_visualisations(
         plt.close(fig)
 
         
-        # (6-9) Gradient maps (MAX-envelope z ML) (geojson + metro points)
-
-        # -------- districts geojson (auto-detect)
+        # (6-9) Mapy gradientowe
         districts_geojson_path = viz_cfg.get("districts_geojson_path")
         if not districts_geojson_path:
             for cand in [
@@ -1687,10 +1517,9 @@ def register_machine_learning_and_visualisations(
                     districts_geojson_path = cand
                     break
 
-        # -------- metro stations (auto-detect: bundle -> cfg -> geojson)
+        # stacje metra 
         metro_stations: Optional[pd.DataFrame] = None
 
-        # prefer bundle dataframes
         for key in ("metro4", "metro", "metro_stations"):
             try:
                 tmp = bundle.get(key)
@@ -1704,7 +1533,6 @@ def register_machine_learning_and_visualisations(
             import geopandas as gpd
 
             gdf = gpd.read_file(str(path))
-            # ensure WGS84
             try:
                 if gdf.crs is None:
                     gdf = gdf.set_crs(epsg=4326, allow_override=True)
@@ -1739,7 +1567,6 @@ def register_machine_learning_and_visualisations(
                     metro_stations = _load_points_from_geojson(cand)
                     break
 
-        # -------- draw if possible
         if districts_geojson_path and isinstance(metro_stations, pd.DataFrame) and not metro_stations.empty:
             try:
                 models: Dict[str, Any] = art.get("models") or {}
@@ -1747,7 +1574,7 @@ def register_machine_learning_and_visualisations(
                 if X_train_ref is None or not isinstance(X_train_ref, pd.DataFrame) or X_train_ref.empty:
                     raise StepExecutionError("ML viz: brak X_train w artifacts (potrzebne do 'typowego mieszkania').")
 
-                # modele potrzebne do panelu z funkcjami
+    
                 xgb = models.get("xgboost")
                 rf = models.get("random_forest")
                 if xgb is None or rf is None:
@@ -1757,11 +1584,10 @@ def register_machine_learning_and_visualisations(
                 grid_points = int(viz_cfg.get("grid_points", 200))
                 r_step_m = float(viz_cfg.get("r_step_m", 25.0))
 
-                # Kandydaci nazw kolumn odległości (w metrach) – Twoje stare i nowe nazwy
                 m1_candidates = ["Odleglosc_metro_m1", "dist_metro_m1_m", "Odleglosc_metro_m1_m"]
                 m2_candidates = ["Odleglosc_metro_m2", "dist_metro_m2_m", "Odleglosc_metro_m2_m"]
 
-                # --- M1 XGBoost
+                # M1 XGBoost
                 fig, _, info = _ml_gradient_map_max_envelope(
                     model_obj=xgb,
                     X_train_ref=X_train_ref,
@@ -1772,13 +1598,13 @@ def register_machine_learning_and_visualisations(
                     grid_points=grid_points,
                     r_step_m=r_step_m,
                     cmap="jet",
-                    title="Mapa gradientowa potencjalnych zmian cen (MAX-envelope)\n(M1 – XGBoost)",
+                    title="Mapa gradientowa potencjalnych zmian cen \n(M1 – XGBoost)",
                 )
                 figs["06_gradient_map_max_m1_xgboost"] = _save_fig(fig, out_dir / "06_gradient_map_max_m1_xgboost.png")
                 _maybe_show_matplotlib(fig, enabled=show_plots)
                 plt.close(fig)
 
-                # --- M1 RF
+                # M1 RF
                 fig, _, info = _ml_gradient_map_max_envelope(
                     model_obj=rf,
                     X_train_ref=X_train_ref,
@@ -1789,13 +1615,13 @@ def register_machine_learning_and_visualisations(
                     grid_points=grid_points,
                     r_step_m=r_step_m,
                     cmap="viridis",
-                    title="Mapa gradientowa potencjalnych zmian cen (MAX-envelope)\n(M1 – Random Forest)",
+                    title="Mapa gradientowa potencjalnych zmian cen \n(M1 – Random Forest)",
                 )
                 figs["07_gradient_map_max_m1_rf"] = _save_fig(fig, out_dir / "07_gradient_map_max_m1_rf.png")
                 _maybe_show_matplotlib(fig, enabled=show_plots)
                 plt.close(fig)
 
-                # --- M2 XGBoost
+                # M2 XGBoost
                 fig, _, info = _ml_gradient_map_max_envelope(
                     model_obj=xgb,
                     X_train_ref=X_train_ref,
@@ -1806,13 +1632,13 @@ def register_machine_learning_and_visualisations(
                     grid_points=grid_points,
                     r_step_m=r_step_m,
                     cmap="jet",
-                    title="Mapa gradientowa potencjalnych zmian cen (MAX-envelope)\n(M2 – XGBoost)",
+                    title="Mapa gradientowa potencjalnych zmian cen \n(M2 – XGBoost)",
                 )
                 figs["08_gradient_map_max_m2_xgboost"] = _save_fig(fig, out_dir / "08_gradient_map_max_m2_xgboost.png")
                 _maybe_show_matplotlib(fig, enabled=show_plots)
                 plt.close(fig)
 
-                # --- M2 RF
+                # M2 RF
                 fig, _, info = _ml_gradient_map_max_envelope(
                     model_obj=rf,
                     X_train_ref=X_train_ref,
@@ -1823,7 +1649,7 @@ def register_machine_learning_and_visualisations(
                     grid_points=grid_points,
                     r_step_m=r_step_m,
                     cmap="viridis",
-                    title="Mapa gradientowa potencjalnych zmian cen (MAX-envelope)\n(M2 – Random Forest)",
+                    title="Mapa gradientowa potencjalnych zmian cen \n(M2 – Random Forest)",
                 )
                 figs["09_gradient_map_max_m2_rf"] = _save_fig(fig, out_dir / "09_gradient_map_max_m2_rf.png")
                 _maybe_show_matplotlib(fig, enabled=show_plots)

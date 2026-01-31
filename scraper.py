@@ -15,8 +15,6 @@ import csv
 from pathlib import Path
 import threading
 
-
-
 class WebScrapeOtodom:
     def __init__(self, start_page=1, end_page=3):
         self.start_page = start_page
@@ -147,7 +145,6 @@ class WebScrapeOtodom:
         description = self._get_description(url)
         description = re.sub(r'\s+', ' ', description).strip()
 
-        # --- drobna inicjalizacja, by fallback mógł działać poza blokiem try ---
         features = []
 
         area = rooms = floor_info = rent = market_type = build_year = additional_info = 'brak danych'
@@ -207,20 +204,16 @@ class WebScrapeOtodom:
             except json.JSONDecodeError:
                 pass  
 
-        # --- PODMIANA: solidne pobieranie Stanu wykończenia i Windy + fallback z features ---
-        
-        # --- STAN WYKOŃCZENIA z JSON (characteristics) z fallbackiem do HTML ---
+
         state = self._get_label_value(
             soup, html_content, "Stan wykończenia", json_key="construction_status"
         )
 
-        # --- WINDA: spróbuj też przez JSON (jeśli kiedyś będzie w characteristics), potem HTML ---
         elevator = self._get_label_value(
             soup, html_content, "Winda", json_key="lift"
         )
 
 
-        # Fallback z features, jeśli dalej 'brak danych'
         features_lower = [f.lower() for f in features] if isinstance(features, list) else []
         if elevator == 'brak danych' and features_lower:
             if any('winda' in f for f in features_lower):
@@ -248,9 +241,6 @@ class WebScrapeOtodom:
         ]
 
 
-
-
-
 if __name__ == "__main__":
     START_PAGE = 1
     END_PAGE = 267
@@ -261,18 +251,17 @@ if __name__ == "__main__":
     FINAL_CSV_PATH = DATA_DIR / "otodom_offers.csv"
     CHECKPOINT_EVERY = 1000
     CHECKPOINT_PREFIX = "raw_checkpoint_"
-    RESUME_FROM_EXISTING = True  # <- ustaw False, jeśli chcesz zawsze start od zera
+    RESUME_FROM_EXISTING = True  
 
     def write_csv(path: Path, rows: list[dict]) -> None:
         if not rows:
             return
 
-        # 1) Zbierz pełny schemat jako unia kluczy
+        # 1) Zbieranie pełnego schematu
         all_keys = set()
         for r in rows:
             all_keys.update(r.keys())
 
-        # (opcjonalnie) ustaw preferowaną kolejność — np. offer_url na początku
         preferred = ["offer_url"]
         other_keys = sorted(k for k in all_keys if k not in preferred)
         fieldnames = [k for k in preferred if k in all_keys] + other_keys
@@ -294,10 +283,6 @@ if __name__ == "__main__":
             return list(r)
 
     def find_last_checkpoint(dir_path: Path, prefix: str = CHECKPOINT_PREFIX) -> tuple[int, Path | None]:
-        """
-        Zwraca (max_n, path) dla pliku w formacie raw_checkpoint_{n}.csv.
-        Jeśli brak, zwraca (0, None).
-        """
         max_n = 0
         max_path = None
         for p in dir_path.glob(f"{prefix}*.csv"):
@@ -309,7 +294,7 @@ if __name__ == "__main__":
                 continue
         return max_n, max_path
 
-    # 1) Zbierz/odczytaj linki do ofert
+    # 1) Odczytanie linków z ofertami
     if OFFER_LINKS_PATH.exists():
         print(f"[INFO] Czytam linki z pliku: {OFFER_LINKS_PATH}")
         with OFFER_LINKS_PATH.open("r", encoding="utf-8") as f:
@@ -332,10 +317,9 @@ if __name__ == "__main__":
     total_links = len(links)
     print(f"[INFO] Do przetworzenia linków: {total_links}")
 
-    # 2) Wznawianie: najpierw spróbuj z FINAL, potem z checkpointu
     all_data: list[dict] = []
     processed = 0
-    resume_from_idx = 0  # zero-based; odpowiada liczbie już przetworzonych
+    resume_from_idx = 0  
 
     if RESUME_FROM_EXISTING:
         if FINAL_CSV_PATH.exists():
@@ -371,7 +355,6 @@ if __name__ == "__main__":
                 if ": " in line:
                     key, val = line.split(": ", 1)
                     entry[key] = val
-            # (opcjonalnie) zapisz URL — jeśli nie chcesz zmieniać schematu, zakomentuj
             entry.setdefault("offer_url", url)
 
             all_data.append(entry)

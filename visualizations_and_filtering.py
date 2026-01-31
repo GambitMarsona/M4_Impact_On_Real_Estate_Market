@@ -1,66 +1,74 @@
 """
 visualizations_and_filtering.py
 
-- Immutable filtering based on CFG["Filters"]
-  Supported keys:
-    - to_nan
+- Konfiguracja filtrowania - CFG["Filters"]
+  Wspomagane klucze:
+    - map_values
+    - to_nan 
     - drop_columns
     - drop_na
     - fill_na
+    - astype
     - impute_median
     - range
 
-- Missing-data report before visualizations
-- Visualization registry + runner: run_from_bundle(bundle, CFG)
-- Auto-save to ./visualizations (creates dir if missing)
+- Raport brakujących danych przed wizualizacjami 
+- Rejestracja wizualizacji + runner: run_from_bundle(bundle, CFG)   
+- Auto zapis do ./visualizations (tworzy ścieżkę jeżeli brakuje) 
 
-- Visualizations included:
-    - warsaw_price_isolines (Ordinary Kriging, 50 samples per district)
-    - violin_price_by_year_group
+
+- Uwzględnione wizualizacje: 
+    - "warsaw_price_isolines"
+    - "violin_price_by_year_jenks"
+    - "joyplot_price_by_finish_state"
+    - "amenities_frequency_bar_hue"
+    - "distance_distributions_original_vs_log"
+    - "decision_tree_rooms_price"
+    - "boxplot_price_by_district"
+    - "mean_price_vs_distance_poly2"
+    - "warsaw_wordcloud"
+
 """
 
 from __future__ import annotations
-
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Tuple
-
 import numpy as np
 import pandas as pd
 
-
 # ============================================================
-# Filtering (IMMUTABLE)
+# Funkcja aplikująca filtry
 # ============================================================
 def apply_filters(df: pd.DataFrame, Filters: Mapping[str, Any]) -> pd.DataFrame:
     """
-    Correct and SAFE filter order.
+    Aplikator filtrów
     """
     out = df.copy()
 
-    # 1) normalize textual missing values -> NaN
+    # 1) normalizacja wartości brakujących [konwersja braków danych do np.nan]  
     to_nan = Filters.get("to_nan", [])
     if to_nan:
         out = out.replace(list(to_nan), np.nan)
 
-    # 2) drop entire columns
+    # 2) porzucenie kolumn
     drop_columns = Filters.get("drop_columns", [])
     if drop_columns:
         cols = [c for c in drop_columns if c in out.columns]
         out = out.drop(columns=cols)
 
-    # 3) fill NaN with constants (strings/categories)
+    # 3) wypełnienie braków nową kategorią
     fill_na = Filters.get("fill_na", {})
     for col, val in fill_na.items():
         if col in out.columns:
             out[col] = out[col].fillna(val)
 
-    # 3.5) map values (recode categories/strings -> numbers etc.)
+    # 4) mapowanie wartości (rekodowanie kategorii -> liczby itp.) 
     map_values = Filters.get("map_values", {})
     for col, mapping in map_values.items():
         if col in out.columns:
             out[col] = out[col].replace(mapping)
 
-    # 4) explicit type casting  🔑🔑🔑
+    # 5) upewnienie się co do typu danych
     astype = Filters.get("astype", {})
     for col, dtype in astype.items():
         if col not in out.columns:
@@ -73,47 +81,44 @@ def apply_filters(df: pd.DataFrame, Filters: Mapping[str, Any]) -> pd.DataFrame:
         else:
             out[col] = out[col].astype(dtype)
 
-    # 5) impute median (now SAFE)
+    # 6) imputacja medianowa
     for col in Filters.get("impute_median", []):
         if col in out.columns:
             med = out[col].median(skipna=True)
             if not pd.isna(med):
                 out[col] = out[col].fillna(med)
 
-    # 6) drop rows with NaN in required numeric columns
+    # 7) porzucenie wierszy z brakami danych 
     drop_na = Filters.get("drop_na", [])
     if drop_na:
         out = out.dropna(subset=drop_na)
 
-    # 7) numeric ranges (now SAFE)
+    # 8) numeryczne zakresy danych
     for col, (lo, hi) in Filters.get("range", {}).items():
         if col in out.columns:
             out = out[out[col].between(lo, hi)]
 
     return out
 
-
-
-
 # ============================================================
-# Missing-data report
+# Raport brakujących danych
 # ============================================================
 
 def missing_report(df: pd.DataFrame, top_n: int = 10) -> None:
     na_counts = df.isna().sum().sort_values(ascending=False)
     na_counts = na_counts[na_counts > 0]
 
-    print("\n=== Missing data report (after Filters) ===")
-    print(f"Rows: {df.shape[0]:,} | Columns: {df.shape[1]:,}")
-    print(f"Columns with NaN: {len(na_counts)} | Total NaNs: {int(na_counts.sum()):,}")
+    print("\n=== Raport wartości brakujących (po Filtrowaniu) ===")
+    print(f"Wiersze: {df.shape[0]:,} | Kolumny: {df.shape[1]:,}")
+    print(f"Kolumny z brakami danych: {len(na_counts)} | Całkowita liczba NaN's: {int(na_counts.sum()):,}")
 
     if not na_counts.empty:
-        print("\nTop columns by missing values:")
+        print("\nKolumny z największą liczbą braków:")
         print(na_counts.head(top_n).to_string())
 
 
 # ============================================================
-# Stratified sampling
+# Próbkowanie warstwowe
 # ============================================================
 
 def stratified_sample(
@@ -123,7 +128,7 @@ def stratified_sample(
     random_state: int = 42,
 ) -> pd.DataFrame:
     """
-    Returns NEW df with up to n_per_group samples per group.
+    Zwraca nowy plik z danymi z maksymalnie n_per_group liczbą obserwacji z poszczególnej kolumny
     """
     if group_col not in df.columns:
         raise KeyError(f"Missing group column '{group_col}' for stratified_sample")
@@ -139,13 +144,11 @@ def stratified_sample(
           .reset_index(drop=True)
     )
 
-
 # ============================================================
-# Visualization registry
+# Rejestracja wizualizacji
 # ============================================================
 
 _VIZ_REGISTRY: Dict[str, Callable[..., Tuple[Any, Any]]] = {}
-
 
 def register_viz(name: str):
     def decorator(func: Callable[..., Tuple[Any, Any]]):
@@ -153,15 +156,13 @@ def register_viz(name: str):
         return func
     return decorator
 
-
 def run_visualization(name: str, df: pd.DataFrame, **params):
     if name not in _VIZ_REGISTRY:
         raise KeyError(f"Visualization '{name}' is not registered")
     return _VIZ_REGISTRY[name](df, **params)
 
-
 # ============================================================
-# Auto-save
+# Automatyczny zapis
 # ============================================================
 
 def _ensure_dir(path: str | Path) -> Path:
@@ -169,12 +170,10 @@ def _ensure_dir(path: str | Path) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     return p
 
-
 def save_figure_default(fig, stem: str, out_dir: str | Path = "visualizations") -> Path:
     out_path = _ensure_dir(out_dir) / f"{stem}.png"
     fig.savefig(out_path, dpi=220, bbox_inches="tight")
     return out_path
-
 
 # ============================================================
 # Notebook runner
@@ -182,7 +181,7 @@ def save_figure_default(fig, stem: str, out_dir: str | Path = "visualizations") 
 
 def run_from_bundle(bundle, CFG: Mapping[str, Any]):
     """
-    Runs all visualizations defined in CFG.
+    Odpala wszystkie wizualizacjie zdefiniowane w CFG.
     """
     import matplotlib.pyplot as plt
 
@@ -192,7 +191,7 @@ def run_from_bundle(bundle, CFG: Mapping[str, Any]):
 
     df_filtered = apply_filters(df_base, CFG.get("Filters", {}))
 
-    # Report missingness before visualizations
+    # Daj raport brakujących przed wizualizacjami 
     missing_report(df_filtered)
 
     results = []
@@ -215,7 +214,7 @@ def run_from_bundle(bundle, CFG: Mapping[str, Any]):
 
 
 # ============================================================
-# Visualization: Warsaw price isolines (Kriging)
+# Wizualizacja: mapa izoliniowa cen mieszkań w Warszawie
 # ============================================================
 
 @register_viz("warsaw_price_isolines")
@@ -243,19 +242,19 @@ def warsaw_price_isolines(
     from pykrige.ok import OrdinaryKriging
     import numpy as np
 
-    # --- walidacja
+    # walidacja
     for c in (lon_col, lat_col, value_col, district_col):
         if c not in df.columns:
             raise KeyError(f"Missing column '{c}' required by warsaw_price_isolines")
 
-    # --- dane
+    # dane
     work = df[[lon_col, lat_col, value_col, district_col]].dropna().copy()
     work = stratified_sample(work, district_col, n_per_district, seed)
 
     if len(work) < 10:
         raise ValueError("Too few points for kriging")
 
-    # --- granice Warszawy
+    # granice Warszawy
     warsaw = gpd.read_file(geojson_path)
     if warsaw.crs is None:
         warsaw = warsaw.set_crs("EPSG:4326")
@@ -263,7 +262,7 @@ def warsaw_price_isolines(
     warsaw_2180 = warsaw.to_crs(epsg=2180)
     warsaw_4326 = warsaw_2180.to_crs(epsg=4326)
 
-    # --- punkty
+    # punkty
     gdf = gpd.GeoDataFrame(
         work,
         geometry=gpd.points_from_xy(work[lon_col], work[lat_col]),
@@ -272,7 +271,7 @@ def warsaw_price_isolines(
 
     x, y, z = gdf.geometry.x.values, gdf.geometry.y.values, gdf[value_col].values
 
-    # --- siatka
+    # siatka
     minx, miny, maxx, maxy = warsaw_2180.total_bounds
     grid_x = np.linspace(minx, maxx, grid)
     grid_y = np.linspace(miny, maxy, grid)
@@ -289,12 +288,12 @@ def warsaw_price_isolines(
     mask = grid_pts.within(warsaw_2180.unary_union).values.reshape(GX.shape)
     zstar = np.where(mask, zstar, np.nan)
 
-    # --- do 4326 pod wykres
+    # przeliczenie geometrii punktów pod wykres
     grid_4326 = grid_pts.to_crs(epsg=4326)
     lons = grid_4326.geometry.x.values.reshape(GX.shape)
     lats = grid_4326.geometry.y.values.reshape(GX.shape)
 
-    # --- rysowanie
+    # rysowanie
     fig, ax = plt.subplots(figsize=(10, 8))
 
     cf = ax.contourf(lons, lats, zstar, levels=levels, cmap=cmap)
@@ -314,9 +313,7 @@ def warsaw_price_isolines(
     ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
     ax.grid(True, alpha=0.35)
 
-    # ============================================================
-    # ETYKIETY DZIELNIC (1:1 jak w Twoim kodzie)
-    # ============================================================
+    # etykiety dzielnic 
     if annotate:
         warsaw_4326["centroid"] = warsaw_4326.geometry.centroid
 
@@ -359,12 +356,10 @@ def warsaw_price_isolines(
                 zorder=20,
             )
 
-
     return fig, ax
 
-
 # ============================================================
-# Visualization: Violin plot by year group
+# Wizualizacja: wykres violinowy roku budowy
 # ============================================================
 @register_viz("violin_price_by_year_jenks")
 def violin_price_by_year_jenks(
@@ -372,22 +367,19 @@ def violin_price_by_year_jenks(
     *,
     year_col: str = "Rok budowy",
     value_col: str = "Cena_za_m2",
-    n_groups: int = 3,          # ← JEDYNY PARAMET W CFG
+    n_groups: int = 3,          
     palette: str = "hls",
-    title: str = "Rozkład ceny za m² względem roku budowy (grupowanie Jenks)",
+    title: str = "Rozkład ceny za m² względem roku budowy",
 ):
     """
-    Violin plot with year grouping via Jenks Natural Breaks.
-    Objective:
-      - minimize within-group variance
-      - maximize between-group mean differences
+    Wykres violinowy pogrupowanego roku budowy 
     """
 
     import matplotlib.pyplot as plt
     import seaborn as sns
     import jenkspy
 
-    # --- walidacja
+    # walidacja
     for c in (year_col, value_col):
         if c not in df.columns:
             raise KeyError(f"Missing column '{c}' required by violin_price_by_year_jenks")
@@ -400,11 +392,11 @@ def violin_price_by_year_jenks(
     if work[year_col].nunique() < n_groups:
         raise ValueError("Not enough unique year values for requested n_groups")
 
-    # --- Jenks Natural Breaks
+    # Jenks Natural Breaks
     breaks = jenkspy.jenks_breaks(work[year_col].values, n_classes=n_groups)
     # breaks: [min, b1, b2, ..., max]
 
-    # --- labels
+    # etykiety
     labels = []
     for i in range(len(breaks) - 1):
         lo = int(round(breaks[i]))
@@ -416,7 +408,7 @@ def violin_price_by_year_jenks(
         else:
             labels.append(f"{lo}–{hi}")
 
-    # --- assign groups
+    # przypisanie grup
     work["rok_budowy_group"] = pd.cut(
         work[year_col],
         bins=breaks,
@@ -425,7 +417,7 @@ def violin_price_by_year_jenks(
         ordered=True,
     )
 
-    # --- wykres
+    # wykres
     fig, ax = plt.subplots(figsize=(10, 6))
     sns.violinplot(
         data=work,
@@ -445,7 +437,9 @@ def violin_price_by_year_jenks(
     plt.tight_layout()
     return fig, ax
 
-
+# ============================================================
+# Wizualizacja: rozkład ceny w zależności od stanu wykończenia
+# ============================================================
 @register_viz("joyplot_price_by_finish_state")
 def joyplot_price_by_finish_state(
     df: pd.DataFrame,
@@ -459,15 +453,14 @@ def joyplot_price_by_finish_state(
     title: str = "Rozkłady ceny za m² w zależności od stanu wykończenia z zaznaczoną medianą",
 ):
     """
-    Joyplot (ridge plot) of price per m² grouped by finish state,
-    with median marked for each group.
+    Panel wykresów rozkładów cen w zależności od stanu wykończenia
     """
 
     import joypy
     import seaborn as sns
     import matplotlib.pyplot as plt
 
-    # --- walidacja
+    # walidacja
     for c in (group_col, value_col):
         if c not in df.columns:
             raise KeyError(f"Missing column '{c}' required by joyplot_price_by_finish_state")
@@ -476,19 +469,19 @@ def joyplot_price_by_finish_state(
     work[value_col] = pd.to_numeric(work[value_col], errors="coerce")
     work = work.dropna(subset=[group_col, value_col])
 
-    # --- kolejność grup (alfabetyczna, stabilna)
+    # kolejność grup 
     unique_labels = sorted(work[group_col].unique())
 
-    # --- mapowanie nazw (do ładnych etykiet)
+    # mapowanie nazw 
     if label_map is None:
         display_labels = unique_labels
     else:
         display_labels = [label_map.get(lbl, lbl) for lbl in unique_labels]
 
-    # --- paleta kolorów
+    # paleta kolorów
     colors = sns.color_palette(palette, n_colors=len(unique_labels))
 
-    # --- joyplot
+    # joyplot
     fig, axes = joypy.joyplot(
         data=work,
         by=group_col,
@@ -499,7 +492,7 @@ def joyplot_price_by_finish_state(
         figsize=figsize,
     )
 
-    # --- mediany
+    # mediany
     medians = work.groupby(group_col)[value_col].median()
 
     for ax, label in zip(axes, unique_labels):
@@ -520,9 +513,9 @@ def joyplot_price_by_finish_state(
 
     return fig, axes
 
-
-
-
+# ============================================================
+# Wizualizacja: liczba mieszkań z poszczególnymi udogodnieniami
+# ============================================================
 @register_viz("amenities_frequency_bar_hue")
 def amenities_frequency_bar_hue(
     df: pd.DataFrame,
@@ -536,15 +529,14 @@ def amenities_frequency_bar_hue(
     rotate: int = 45,
 ):
     """
-    Barplot with ggplot-like 'scale_fill_hue()' pastel colors.
-    Colors generated in HSL space for smooth hue transition.
+    Barplot liczności poszczególnych udogodnień w mieszkaniach
     """
 
     import matplotlib.pyplot as plt
     import numpy as np
     import colorsys
 
-    # --- walidacja
+    # walidacja
     if not amenities_cols:
         raise ValueError("amenities_cols must be provided in CFG")
 
@@ -552,7 +544,7 @@ def amenities_frequency_bar_hue(
     if missing:
         raise KeyError(f"Missing amenities columns: {missing}")
 
-    # --- zliczanie wystąpień (jak w R: sum(.x, na.rm=TRUE))
+    # zliczanie wystąpień
     work = df[amenities_cols].apply(pd.to_numeric, errors="coerce")
     counts = work.fillna(0).astype(int).sum().sort_values(ascending=False)
 
@@ -560,11 +552,11 @@ def amenities_frequency_bar_hue(
     plot_df.columns = ["Udogodnienie", "Liczba"]
     plot_df["Udogodnienie"] = plot_df["Udogodnienie"].str.replace(".", " ", regex=False)
 
-    # --- próg 5%
+    # próg X%
     n = len(df)
     threshold = n * min_frac
 
-    # --- generowanie kolorów HSL (jak ggplot2)
+    # generowanie kolorów gradientowych
     def ggplot_hue(n, saturation=0.65, lightness=0.65):
         return [
             colorsys.hls_to_rgb(i / n, lightness, saturation)
@@ -573,7 +565,7 @@ def amenities_frequency_bar_hue(
 
     colors = ggplot_hue(len(plot_df))
 
-    # --- rysowanie
+    # rysowanie
     plt.style.use("ggplot")
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -609,8 +601,9 @@ def amenities_frequency_bar_hue(
 
     return fig, ax
 
-
-
+# ============================================================
+# Wizualizacja: rozkłady zmiennych odległościowych
+# ============================================================
 @register_viz("distance_distributions_original_vs_log")
 def distance_distributions_original_vs_log(
     df: pd.DataFrame,
@@ -629,38 +622,37 @@ def distance_distributions_original_vs_log(
     figsize: tuple[int, int] = (12, 6),
 ):
     """
-    Two stacked density plots (original vs log1p) with one shared legend.
-    Equivalent of ggplot + patchwork (p1 / p2) + guides='collect'.
+    Dwa zestackowane wykresy gęstości odległości od mieszkań
     """
 
     import numpy as np
     import matplotlib.pyplot as plt
     import seaborn as sns
 
-    # --- walidacja kolumn
+    # walidacja kolumn
     missing = [c for c in cols if c not in df.columns]
     if missing:
         raise KeyError(f"Missing columns for distance_distributions_original_vs_log: {missing}")
 
-    # --- przygotuj dane (bez inplace)
+    # przygotuj dane
     work = df[cols].copy()
     for c in cols:
         work[c] = pd.to_numeric(work[c], errors="coerce")
 
-    # --- etykiety jak w ggplot recode()
+    # etykiety
     def _label(c: str) -> str:
         if label_map and c in label_map:
             return label_map[c]
         return c
 
-    # long format
+    # długi format
     orig_long = work.melt(var_name="zmienna", value_name="wartosc").dropna()
     orig_long["zmienna"] = orig_long["zmienna"].map(_label)
 
     log_long = work.apply(np.log1p).melt(var_name="zmienna", value_name="wartosc").dropna()
     log_long["zmienna"] = log_long["zmienna"].map(_label)
 
-    # --- plot
+    # wykres
     plt.style.use("ggplot")
     fig, axes = plt.subplots(nrows=2, ncols=1, figsize=figsize, sharex=False)
     ax1, ax2 = axes
@@ -670,7 +662,7 @@ def distance_distributions_original_vs_log(
     palette = sns.color_palette("husl", n_colors=len(order))
     pal_map = dict(zip(order, palette))
 
-    # TOP: oryginalne
+    # na górze: oryginalne
     for name in order:
         s = orig_long.loc[orig_long["zmienna"] == name, "wartosc"]
         if len(s) > 1:
@@ -690,7 +682,7 @@ def distance_distributions_original_vs_log(
     if xlim is not None:
         ax1.set_xlim(*xlim)
 
-    # BOTTOM: logarytmiczne
+    # na dole: logarytmiczne
     for name in order:
         s = log_long.loc[log_long["zmienna"] == name, "wartosc"]
         if len(s) > 1:
@@ -708,8 +700,7 @@ def distance_distributions_original_vs_log(
     ax2.set_xlabel(xlabel_bottom)
     ax2.set_ylabel(ylabel)
 
-    # --- jedna legenda (zebrana)
-    # zbieramy uchwyty tylko raz z ax1
+    # jedna legenda
     handles, labels = ax1.get_legend_handles_labels()
     ax1.legend_.remove() if ax1.get_legend() else None
     ax2.legend_.remove() if ax2.get_legend() else None
@@ -723,14 +714,14 @@ def distance_distributions_original_vs_log(
         frameon=False,
     )
 
-    # miejsce na legendę po prawej
+    # miejsce na legendę
     fig.tight_layout(rect=[0, 0, 0.92, 1])
 
     return fig, axes
 
-
-
-
+# ============================================================
+# Wizualizacja: drzewo decyzyjne dzielące mieszkania ze względu na liczbę pokoi
+# ============================================================
 @register_viz("decision_tree_rooms_price")
 def decision_tree_rooms_price(
     df: pd.DataFrame,
@@ -743,8 +734,7 @@ def decision_tree_rooms_price(
     title: str = "Drzewo decyzyjne: liczba pokoi → cena",
 ):
     """
-    Drzewo decyzyjne dzielące dane na `n_categories` liści (kategorii),
-    z kolorami liści gradientowo wg średniej ceny (jak rpart.plot RdYlGn).
+    Drzewo decyzyjne dzielące dane na `n_categories` wg średniej ceny.
     """
 
     import matplotlib.pyplot as plt
@@ -754,7 +744,7 @@ def decision_tree_rooms_price(
     from matplotlib.cm import get_cmap
     from matplotlib.colors import Normalize
 
-    # --- prepare data
+    # przygotowanie danych
     work = df[[feature_col, target_col]].copy()
     work[feature_col] = pd.to_numeric(work[feature_col], errors="coerce")
     work[target_col] = pd.to_numeric(work[target_col], errors="coerce")
@@ -763,7 +753,7 @@ def decision_tree_rooms_price(
     X = work[[feature_col]]
     y = work[target_col]
 
-    # --- model
+    # model
     tree = DecisionTreeRegressor(
         max_leaf_nodes=n_categories,
         min_samples_leaf=min_samples_leaf,
@@ -771,31 +761,30 @@ def decision_tree_rooms_price(
     )
     tree.fit(X, y)
 
-    # --- plot
+    # wykres
     fig, ax = plt.subplots(figsize=figsize)
 
     plot_tree(
         tree,
         feature_names=[feature_col],
-        filled=False,          # ← WYŁĄCZAMY defaultowe kolory sklearn
+        filled=False,
         rounded=True,
         precision=0,
         ax=ax,
     )
 
-    # --- przygotuj normalizację kolorów (RdYlGn)
+    # przygotuj normalizację kolorów
     cmap = get_cmap("RdYlGn")
     norm = Normalize(vmin=y.min(), vmax=y.max())
     total_n = len(work)
 
-    # --- popraw etykiety i kolory LIŚCI
     for t in ax.texts:
         txt = t.get_text()
 
         if "value =" not in txt:
             continue
 
-        # --- średnia
+        # średnia
         mean_val = float(
             txt.split("value =")[1]
                .split("\n")[0]
@@ -804,23 +793,23 @@ def decision_tree_rooms_price(
                .strip()
         )
 
-        # --- liczność
+        # liczność
         n = int(
             txt.split("samples =")[1]
                .split("\n")[0]
         )
         pct = int(round(100 * n / total_n))
 
-        # --- kolor wg średniej
+        # kolor wg średniej
         color = cmap(norm(mean_val))
 
-        # --- nowa etykieta (jak na screenie)
+        # nowa etykieta
         t.set_text(
             f"{int(mean_val/1000)}e+3\n"
             f"n={n}  {pct}%"
         )
 
-        # --- styl pudełka (jak rpart)
+        # styl pudełka
         t.set_bbox(dict(
             boxstyle="round,pad=0.35",
             facecolor=color,
@@ -833,7 +822,9 @@ def decision_tree_rooms_price(
     return fig, ax
 
 
-
+# ============================================================
+# Wizualizacja: boxplot z podziałem na poszczególne dzielnice
+# ============================================================
 @register_viz("boxplot_price_by_district")
 def boxplot_price_by_district(
     df: pd.DataFrame,
@@ -846,8 +837,7 @@ def boxplot_price_by_district(
     lightness: float = 0.65,
 ):
     """
-    Boxplot z gradientową paletą (ggplot-like hue sweep),
-    dzielnice uporządkowane po medianie ceny.
+    Boxplot z gradientową paletą
     """
 
     import matplotlib.pyplot as plt
@@ -855,12 +845,12 @@ def boxplot_price_by_district(
     import pandas as pd
     import colorsys
 
-    # --- dane
+    # dane
     work = df[[district_col, value_col]].copy()
     work[value_col] = pd.to_numeric(work[value_col], errors="coerce")
     work = work.dropna()
 
-    # --- reorder dzielnic po medianie (jak dplyr::reorder)
+    # zmiana kolejności dzielnic po medianie
     medians = (
         work.groupby(district_col)[value_col]
             .median()
@@ -868,7 +858,7 @@ def boxplot_price_by_district(
     )
     order = medians.index.tolist()
 
-    # --- gradientowa paleta HSL (jak scale_fill_hue)
+    # gradientowa paleta HSL 
     def ggplot_hue(n, saturation=0.65, lightness=0.65):
         return [
             colorsys.hls_to_rgb(i / n, lightness, saturation)
@@ -883,7 +873,7 @@ def boxplot_price_by_district(
 
     palette = dict(zip(order, colors))
 
-    # --- styl
+    # styl
     plt.style.use("ggplot")
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -901,7 +891,7 @@ def boxplot_price_by_district(
     ax.set_ylabel("Cena za m² (PLN)")
     ax.tick_params(axis="x", rotation=45)
 
-    # --- brak legendy (jak guides(fill = "none"))
+    # brak legendy
     ax.get_legend().remove() if ax.get_legend() else None
 
     plt.tight_layout()
@@ -912,28 +902,27 @@ def boxplot_price_by_district(
 
 
 
+# ============================================================
+# Wizualizacja: średnia cena z trendem wielomianowym
+# ============================================================
 @register_viz("mean_price_vs_distance_poly2")
 def mean_price_vs_distance_poly2(
     df: pd.DataFrame,
     *,
-    distance_cols: list[str] = (
+    distance_cols: list[str] = [
         "dist_to_metro_m1",
         "dist_to_metro_m2",
         "dist_to_shop",
         "dist_to_green",
-    ),
+    ],
     price_col: str = "cena_za_m2",
     bins: int = 100,
     poly_degree: int = 2,
     figsize: tuple[int, int] = (12, 8),
     title: str = "Średnia cena za m² w zależności od odległości z trendem wielomianowym",
-):
+    ):
     """
-    Pythonowy odpowiednik:
-    - cut(..., breaks = 100)
-    - mean(price) w binach
-    - geom_line + geom_point
-    - geom_smooth(method = 'lm', formula = y ~ poly(x, 2))
+    Wykres średniej ceny w zależności od odległości z trendem wielomianowym
     """
 
     import numpy as np
@@ -943,12 +932,12 @@ def mean_price_vs_distance_poly2(
     from sklearn.linear_model import LinearRegression
     import seaborn as sns
 
-    # --- walidacja
+    # walidacja
     missing = [c for c in distance_cols + [price_col] if c not in df.columns]
     if missing:
         raise KeyError(f"Missing columns: {missing}")
 
-    # --- long format
+    # długi format danych
     long = (
         df[distance_cols + [price_col]]
         .dropna()
@@ -960,14 +949,14 @@ def mean_price_vs_distance_poly2(
         )
     )
 
-    # --- binning (cut)
+    # binning 
     long["bin"] = (
         long
         .groupby("distance_type")["distance"]
         .transform(lambda x: pd.cut(x, bins=bins, labels=False))
     )
 
-    # --- agregacja
+    # agregacja
     grouped = (
         long
         .groupby(["distance_type", "bin"], as_index=False)
@@ -980,7 +969,7 @@ def mean_price_vs_distance_poly2(
 
     grouped["distance_mid"] = (grouped["min_dist"] + grouped["max_dist"]) / 2
 
-    # --- etykiety (jak w R)
+    # etykiety 
     facet_titles = {
         "dist_to_metro_m1": "Odległość od stacji M1",
         "dist_to_metro_m2": "Odległość od stacji M2",
@@ -988,7 +977,7 @@ def mean_price_vs_distance_poly2(
         "dist_to_green": "Odległość od zieleni",
     }
 
-    # --- styl
+    # styl
     sns.set_style("whitegrid")
     palette = sns.color_palette("Set2", n_colors=len(distance_cols))
 
@@ -1012,7 +1001,7 @@ def mean_price_vs_distance_poly2(
             s=25,
         )
 
-        # --- trend kwadratowy
+        # trend kwadratowy
         X = sub[["distance_mid"]].values
         y = sub["mean_price"].values
 
@@ -1036,8 +1025,9 @@ def mean_price_vs_distance_poly2(
 
     return fig, axes
 
-
-
+# ============================================================
+# Wizualizacja: chmura słów
+# ============================================================
 @register_viz("warsaw_wordcloud")
 def warsaw_wordcloud(
     df: pd.DataFrame,
@@ -1052,10 +1042,8 @@ def warsaw_wordcloud(
     figsize: tuple[int, int] = (8, 8),
 ):
     """
-    Wordcloud ograniczony do obszaru Warszawy,
-    z automatycznymi stopwords (PL + EN),
-    top-N najczęstszych słów,
-    czyszczenie znaków specjalnych.
+    Wordcloud z automatycznymi stopwords (PL + EN),
+    top-N najczęstszych słów, czyszczeniem znaków specjalnych.
     """
 
     import re
@@ -1066,26 +1054,23 @@ def warsaw_wordcloud(
     from stopwordsiso import stopwords
     from shapely.ops import unary_union
 
-    # --- walidacja
+    # walidacja
     if text_col not in df.columns:
         raise KeyError(f"Missing column '{text_col}' required by warsaw_wordcloud")
 
-    # ============================================================
-    # STOPWORDS (AUTOMATYCZNE)
-    # ============================================================
+    # stopwords (automatyczne)
     STOPWORDS_PL = set(stopwords("pl"))
     ALL_STOPWORDS = STOPWORDS.union(STOPWORDS_PL)
 
-    # ============================================================
-    # TEKST → TOKENY
-    # ============================================================
+    
+    # tekst → tokeny
     text = (
         df[text_col]
         .dropna()
         .astype(str)
         .str.lower()
-        .str.replace(r"[^\w\s]", " ", regex=True)   # znaki specjalne
-        .str.replace(r"\d+", " ", regex=True)       # liczby
+        .str.replace(r"[^\w\s]", " ", regex=True)   
+        .str.replace(r"\d+", " ", regex=True)       
         .str.replace(r"\s+", " ", regex=True)
         .str.strip()
         .str.cat(sep=" ")
@@ -1102,9 +1087,8 @@ def warsaw_wordcloud(
 
     clean_text = " ".join(tokens)
 
-    # ============================================================
-    # MASKA WARSZAWY
-    # ============================================================
+    
+    # maska warszawy
     warsaw = gpd.read_file(geojson_path)
     if warsaw.crs is None:
         warsaw = warsaw.set_crs("EPSG:4326")
@@ -1128,9 +1112,8 @@ def warsaw_wordcloud(
     mask = np.where(mask, 0, 255).astype(np.uint8)
 
 
-    # ============================================================
-    # WORDCLOUD
-    # ============================================================
+
+    # wordcloud
     wc = WordCloud(
         width=width,
         height=height,
@@ -1143,9 +1126,8 @@ def warsaw_wordcloud(
         contour_color="black",
     ).generate(clean_text)
 
-    # ============================================================
-    # PLOT
-    # ============================================================
+
+    # plot
     fig, ax = plt.subplots(figsize=figsize)
     ax.imshow(wc, interpolation="bilinear")
     ax.axis("off")

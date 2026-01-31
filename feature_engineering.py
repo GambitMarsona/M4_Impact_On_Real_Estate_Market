@@ -74,7 +74,7 @@ def _save_snapshot(
     snapshot_dir = Path(snapshot_dir)
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-    # Jeśli nie ma kolumny lat (np. przy dalszych krokach) - licz po prostu wiersze
+    # Jeśli nie ma kolumny lat - liczy po prostu wiersze
     if "Szerokosc_geo" in df.columns:
         filled_count = int(df["Szerokosc_geo"].notna().sum())
     else:
@@ -136,7 +136,7 @@ def register_feature_engineering(
         else:
             df["Dlugosc_geo"] = pd.to_numeric(df["Dlugosc_geo"], errors="coerce")
 
-        # NOWE: flaga próby geokodowania (0/1)
+        # flaga próby geokodowania
         if "proba_geokodowania" not in df.columns:
             df["proba_geokodowania"] = np.int8(0)
         else:
@@ -146,7 +146,6 @@ def register_feature_engineering(
                 .astype("int8")
             )
 
-        # jeśli geokodowanie jest wyłączone → NIE dzwonimy do API, tylko zwracamy dane
         if not enable_geocode:
             bundle.set("data", df)
             return df
@@ -160,7 +159,6 @@ def register_feature_engineering(
         idxs = df.index[need]
 
         if len(idxs) == 0:
-            # nic do roboty (wszystko już geokodowane albo już próbowane)
             bundle.set("data", df)
             return df
 
@@ -176,13 +174,12 @@ def register_feature_engineering(
                 if not a:
                     continue
 
-                # dokładamy miasto, jeśli nie ma w adresie
                 if city_default and city_default.lower() not in a.lower():
                     full_addr = f"{a}, {city_default}, Polska"
                 else:
                     full_addr = a
 
-                # NOWE: oznacz, że była próba (nawet jeśli wyjdzie NaN)
+                # oznaczenie, że była próba geokodowania
                 df.at[i, "proba_geokodowania"] = np.int8(1)
 
                 lat, lon = geocode_func(full_addr)
@@ -203,7 +200,7 @@ def register_feature_engineering(
                             f"NaN w ostatnich {window_size}: {nan_recent}."
                         )
 
-                # obsługa fail_streak (API sypie NaN)
+                # obsługa fail_streak
                 if is_nan_pair:
                     fail_streak += 1
                     if fail_streak >= max_consecutive_failures:
@@ -259,9 +256,7 @@ def _clean_price_to_float(x: str | float | int) -> float:
     if isinstance(x, (int, float)):
         return float(x)
     s = str(x)
-    # wyrzuć wszystko poza cyframi, kropką i przecinkiem
     s = re.sub(r"[^0-9,\.]", "", s)
-    # zamień przecinek na kropkę
     s = s.replace(",", ".")
     if not s:
         return np.nan
@@ -285,7 +280,6 @@ def _prepare_latlon_from_geometry(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     Upewnia się, że gdf ma kolumny lat/lon (EPSG:4326).
     """
     if gdf.crs is None:
-        # zakładamy WGS84 jeśli brak – w razie czego poprawisz ręcznie
         gdf = gdf.set_crs(epsg=4326)
     else:
         gdf = gdf.to_crs(epsg=4326)
@@ -310,13 +304,12 @@ def _compute_balltree_distance_m(
     out = np.full(n, np.nan, dtype=float)
 
     if poi_latlon.size == 0:
-        return out  # brak punktów referencyjnych
+        return out  
 
     base_coords = base_df.loc[valid_mask, ["Szerokosc_geo", "Dlugosc_geo"]].to_numpy()
     if base_coords.size == 0:
-        return out  # brak punktów ofert z poprawnymi współrzędnymi
-
-    # haversine: pracujemy na radianach
+        return out  
+    
     base_rad = np.radians(base_coords)
     poi_rad = np.radians(poi_latlon)
 
@@ -324,7 +317,6 @@ def _compute_balltree_distance_m(
     dist_rad, _ = tree.query(base_rad, k=1)
     dist_m = dist_rad[:, 0] * earth_radius_m
 
-    # wstawiamy tylko w miejsca valid_mask – długość się zgadza (sum(valid_mask))
     out[valid_mask.to_numpy()] = dist_m
     return out
 
@@ -351,7 +343,7 @@ def register_spatial_features(
     @pipe.register(
         name="spatial_features",
         on_table="data",
-        requires=(),  # <-- NIC nie wymagamy w bundle, tylko kolumn w df
+        requires=(),  
         produces=(
             "Odleglosc_metro_m1",
             "Odleglosc_metro_m2",
@@ -361,12 +353,11 @@ def register_spatial_features(
             "Cena_za_m2",
         ),
         description="Cechy przestrzenne + dzielnica + cena/m2.",
-        skip_if_all_produced_present=False,  # jeśli wszystko jest, krok się skipnie
+        skip_if_all_produced_present=False,  
     )
     def _spatial_features(data: pd.DataFrame) -> pd.DataFrame:
         df = data.copy()
 
-        # --- upewnij się, że Szerokosc_geo/Dlugosc_geo są numeryczne ---
         df["Szerokosc_geo"] = pd.to_numeric(df.get("Szerokosc_geo"), errors="coerce")
         df["Dlugosc_geo"] = pd.to_numeric(df.get("Dlugosc_geo"), errors="coerce")
         valid = df["Szerokosc_geo"].notna() & df["Dlugosc_geo"].notna()
@@ -449,20 +440,17 @@ def register_spatial_features(
         if log_every:
             print("[SPATIAL] Spatial join z dzielnicami...")
 
-        # oferty jako GeoDataFrame
         offers_gdf = gpd.GeoDataFrame(
             df.copy(),
             geometry=gpd.points_from_xy(df["Dlugosc_geo"], df["Szerokosc_geo"]),
             crs="EPSG:4326",
         )
 
-        # districts do tego samego CRS
         if districts.crs is None:
             districts = districts.set_crs(epsg=4326)
         else:
             districts = districts.to_crs(epsg=4326)
 
-        # znajdź kolumnę z nazwą dzielnicy
         district_name_col = None
         for c in ["district", "dzielnica", "name", "nazwa", "jpt_nazwa_", "JPT_NAZWA_"]:
             if c in districts.columns:
@@ -479,7 +467,7 @@ def register_spatial_features(
                 how="left",
                 predicate="within",
             )
-            # mamy potencjalne duplikaty indeksów (punkt w więcej niż jednym poligonie)
+            # mamy potencjalne duplikaty indeksów 
             district_series = joined[district_name_col]
             # bierzemy pierwszą dzielnicę dla danego indeksu oferty
             district_series = district_series.groupby(level=0).first()
@@ -519,7 +507,6 @@ def register_spatial_features(
         area_val = pd.to_numeric(df[area_col], errors="coerce")
         df["Cena_za_m2"] = df["Cena"] / area_val.replace(0, np.nan)
 
-        # usunięcia zgodnie z listą
         cols_to_drop = []
         for c in [
             "dist_metro_m1_m",
@@ -566,7 +553,7 @@ def register_additional_info_binarization(
     snapshot_prefix: str = "otodom_offers_api_",
     log_every: int = 0,
     info_col_candidates = ("Informacje dodatkowe", "informacje dodatkowe", "additional_info"),
-    min_freq: int = 1,  # możesz podnieść np. do 10, żeby wyrzucić bardzo rzadkie cechy
+    min_freq: int = 1,  
 ) -> Pipeline:
     """
     Krok 3: one-hot encoding kolumny 'Informacje dodatkowe'.
@@ -575,10 +562,7 @@ def register_additional_info_binarization(
     """
 
     def _sanitize_dummy_col(name: str) -> str:
-        # oryginalny tekst -> str
         name = str(name).strip().lower()
-
-        # transliteracja polskich znaków
         translit_map = {
             "ą": "a",
             "ć": "c",
@@ -593,13 +577,10 @@ def register_additional_info_binarization(
         for src, tgt in translit_map.items():
             name = name.replace(src, tgt)
 
-        # spacje -> podkreślenia
         name = re.sub(r"\s+", "_", name)
 
-        # wyrzucamy naprawdę dziwne znaki (ale polskie już zamieniliśmy wyżej)
         name = re.sub(r"[^0-9a-z_]", "", name)
 
-        # obetnij podkreślenia z brzegów
         name = name.strip("_")
 
         if not name:
@@ -610,14 +591,13 @@ def register_additional_info_binarization(
     @pipe.register(
         name="additional_info_binarization",
         on_table="data",
-        requires=(),          # nie wymagamy niczego w bundle
-        produces=(),          # nie znamy z góry nazw kolumn, więc zostawiamy pusto
+        requires=(),         
+        produces=(),          
         description="One-hot encoding kolumny 'Informacje dodatkowe'.",
-        skip_if_all_produced_present=False,  # zawsze uruchamiany
+        skip_if_all_produced_present=False, 
     )
     def _additional_info_binarization(data: pd.DataFrame) -> pd.DataFrame:
         df = data.copy()
-        # znajdź kolumnę z dodatkowymi informacjami
         info_col = _pick_first_existing(df, info_col_candidates)
 
         s = (
@@ -628,14 +608,15 @@ def register_additional_info_binarization(
 
         if log_every:
             print(f"[BIN] Start binarizacji kolumny '{info_col}'")
-
+        
         # normalizacja separatorów: ; | / • + -> przecinki
         s_norm = s.str.lower()
         for sep in [";", "|", "/", "•", "+", "\n", "\t"]:
             s_norm = s_norm.str.replace(sep, ",", regex=False)
-
+        
         # ujednolicenie spacji wokół przecinków
         s_norm = s_norm.str.replace(r"\s*,\s*", ",", regex=True)
+        
         # obcięcie zbędnych przecinków na brzegach
         s_norm = s_norm.str.strip(" ,")
 

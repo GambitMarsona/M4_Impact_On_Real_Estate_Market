@@ -15,7 +15,7 @@ from feature_engineering import (
 
 
 DATA_DIR = Path("data")
-SNAP_PREFIX = "otodom_offers_api_"  # np. otodom_offers_api_5000.csv
+SNAP_PREFIX = "otodom_offers_api_"  
 
 
 def _find_best_api_file() -> Optional[Path]:
@@ -46,7 +46,7 @@ def _find_best_api_file() -> Optional[Path]:
 def run_pipeline(
     data: str = "otodom_offers.csv",  
     log_every: int = 0,               
-    geojson_dir: str | Path = "geojson",  # katalog z green/metro/supermarket/districts
+    geojson_dir: str | Path = "geojson",  
 ) -> Bundle:
     """
     Główna funkcja do użycia w notebooku.
@@ -113,7 +113,7 @@ def run_pipeline(
     register_spatial_features(
         pipe,
         bundle=bundle,
-        geojson_dir=geojson_dir,  # <- teraz jest obsługiwane
+        geojson_dir=geojson_dir,  
         snapshot_dir=DATA_DIR,
         snapshot_prefix=SNAP_PREFIX,
         log_every=log_every,
@@ -127,10 +127,8 @@ def run_pipeline(
         log_every=log_every,
     )
 
-
-
     try:
-        pipe.run()  # odpal wszystkie zarejestrowane kroki (na razie 2)
+        pipe.run() 
     except StepExecutionError as e:
         meta["error"] = str(e)
 
