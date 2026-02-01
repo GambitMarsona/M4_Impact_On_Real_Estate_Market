@@ -1,0 +1,305 @@
+{
+  "type": "FeatureCollection",
+  "name": "Metro M4 stacje",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          21.08430555555556,
+          52.16602777777778
+        ]
+      },
+      "properties": {
+        "Station": "Metro Wilanów"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          21.06822222222222,
+          52.16983333333333
+        ]
+      },
+      "properties": {
+        "Station": "Metro Sobieskiego"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          21.05463888888889,
+          52.17286111111111
+        ]
+      },
+      "properties": {
+        "Station": "Metro Patkowskiego"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          21.04425,
+          52.17519444444444
+        ]
+      },
+      "properties": {
+        "Station": "Metro Dolina Służewiecka"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          21.021833333333333,
+          52.17966666666666
+        ]
+      },
+      "properties": {
+        "Station": "Metro Wilanowska"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          21.012138888888888,
+          52.17955555555555
+        ]
+      },
+      "properties": {
+        "Station": "Metro Smoluchowskiego"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          21.002166666666668,
+          52.17841666666666
+        ]
+      },
+      "properties": {
+        "Station": "Metro Rondo Unii Europejskiej"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.988777777777777,
+          52.18161111111111
+        ]
+      },
+      "properties": {
+        "Station": "Metro Służewiec"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.980916666666666,
+          52.192166666666665
+        ]
+      },
+      "properties": {
+        "Station": "Metro Żwirki i Wigury"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.976666666666667,
+          52.20416666666667
+        ]
+      },
+      "properties": {
+        "Station": "Metro Wiślicka"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.97652777777777,
+          52.21111111111112
+        ]
+      },
+      "properties": {
+        "Station": "Metro Bitwy Warszawskiej 1920"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.983138888888888,
+          52.21908333333334
+        ]
+      },
+      "properties": {
+        "Station": "Metro Plac Narutowicza"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.985472222222224,
+          52.22886111111112
+        ]
+      },
+      "properties": {
+        "Station": "Metro Plac Zawiszy"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.983194444444443,
+          52.232083333333335
+        ]
+      },
+      "properties": {
+        "Station": "Metro Rondo Daszyńskiego"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.98022222222222,
+          52.23777777777778
+        ]
+      },
+      "properties": {
+        "Station": "Metro Okopowa"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.97772222222222,
+          52.244083333333336
+        ]
+      },
+      "properties": {
+        "Station": "Metro Cm. Żydowski"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.982527777777776,
+          52.254777777777775
+        ]
+      },
+      "properties": {
+        "Station": "Rondo Radosława"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.98047222222222,
+          52.25991666666667
+        ]
+      },
+      "properties": {
+        "Station": "Metro Rydygiera"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.974361111111108,
+          52.27055555555555
+        ]
+      },
+      "properties": {
+        "Station": "Metro Marymont"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.97583333333333,
+          52.28455555555556
+        ]
+      },
+      "properties": {
+        "Station": "Metro Ruda"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.98363888888889,
+          52.308166666666665
+        ]
+      },
+      "properties": {
+        "Station": "Metro Płochocińska"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.97627777777777,
+          52.315444444444445
+        ]
+      },
+      "properties": {
+        "Station": "Metro Obrazkowa"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          20.96225,
+          52.31741666666667
+        ]
+      },
+      "properties": {
+        "Station": "Metro Myśliborska"
+      }
+    }
+  ]
+}

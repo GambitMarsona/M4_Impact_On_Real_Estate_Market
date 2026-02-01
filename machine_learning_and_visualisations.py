@@ -1566,6 +1566,11 @@ def register_machine_learning_and_visualisations(
                 if Path(cand).exists():
                     metro_stations = _load_points_from_geojson(cand)
                     break
+        
+        m4_geo = Path("geojson/metro_m4_stations.geojson")
+        if m4_geo.exists():
+            metro_stations = _load_points_from_geojson(m4_geo)
+
 
         if districts_geojson_path and isinstance(metro_stations, pd.DataFrame) and not metro_stations.empty:
             try:
